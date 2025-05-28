@@ -173,6 +173,7 @@ app.post('/bank/hit', async (req, res) => {
   const { name, amount } = req.body ?? {};
   if (!name || !amount) return res.status(400).end();
 
+  console.log('hit', name, amount);
   /* ① 같은 이름·금액의 미결 주문 전체 조회 */
   const rows = await db.all(
     `SELECT id FROM orders
