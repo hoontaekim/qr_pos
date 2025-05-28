@@ -168,34 +168,36 @@ app.get('/api/order/:id', async (req, res) => {
   order ? res.json(order) : res.status(404).end();
 });
 
-// ---------- (모의) 은행 웹훅 ----------
-/*  실제 운영 시
-      - CODEF /openbanking 거래내역 조회 후 반복 호출 OR
-      - KISA 오픈뱅킹 “입금이체결과 통보” 웹훅으로 교체
- */
-app.post('/bank/webhook', async (req, res) => {
-  const { senderName, amount } = req.body;
-  // 이름·금액 일치하는 미결 주문 검색
-  const order = await db.get(
-    `SELECT * FROM orders WHERE name = ? AND amount = ? AND status = 'pending'`,
-    senderName.trim(), amount
+// ---------- KB PUSH LISTENER ----------
+app.post('/bank/hit', async (req, res) => {
+  const { name, amount } = req.body ?? {};
+  if (!name || !amount) return res.status(400).end();
+
+  /* ① 같은 이름·금액의 미결 주문 전체 조회 */
+  const rows = await db.all(
+    `SELECT id FROM orders
+     WHERE status='pending' AND name=? AND amount=?`,
+    name.trim(), amount
   );
-  if (!order) {
-    return res.json({ ok: false, msg: 'no_match' });
+
+  if (rows.length === 0) {
+    return res.json({ ok:false, msg:'no_match' });
   }
-  // 동일 조건 복수 → 수동 확인
-  const dup = await db.get(
-    `SELECT COUNT(*) AS cnt FROM orders
-     WHERE name = ? AND amount = ? AND status = 'pending'`,
-    senderName.trim(), amount
-  );
-  if (dup.cnt > 1) {
-    await db.run(`UPDATE orders SET status = 'manual_check' WHERE id = ?`, order.id);
-    return res.json({ ok: true, status: 'manual_check' });
+
+  /* ② 중복인지 단일인지 판별 */
+  if (rows.length === 1) {
+    await db.run(`UPDATE orders SET status='paid' WHERE id=?`, rows[0].id);
+    return res.json({ ok:true, status:'paid', orderId: rows[0].id });
   }
-  // 정상 결제
-  await db.run(`UPDATE orders SET status = 'paid' WHERE id = ?`, order.id);
-  return res.json({ ok: true, status: 'paid' });
+
+  /* ③ 동일 (name,amount) 가 2건↑ → manual_check */
+  await db.run(`UPDATE orders SET status='manual_check' WHERE id=?`, rows[0].id);
+  return res.json({
+    ok:true,
+    status:'manual_check',
+    orderId: rows[0].id,
+    duplicates: rows.length
+  });
 });
 
 app.listen(3000, () => console.log('🎉 http://localhost:3000'));
