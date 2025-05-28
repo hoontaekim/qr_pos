@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>주문 관리자</title>
+<style>
+body{font-family:sans-serif;margin:20px;max-width:640px}
+table{width:100%;border-collapse:collapse}
+th,td{border:1px solid #ccc;padding:6px;text-align:center}
+tr.pending{background:#fff9c4}
+tr.paid{background:#c8e6c9}
+tr.served td{opacity:.5;text-decoration:line-through}
+button{padding:4px 8px}
+</style>
+</head>
+<body>
+<h2>📋 실시간 주문 현황</h2>
+<table id="tbl">
+  <thead>
+    <tr><th>ID</th><th>테이블</th><th>이름</th><th>금액</th>
+        <th>결제</th><th>주문</th><th>조작</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<script>
+const key = new URLSearchParams(location.search).get('key');
+if (!key) { alert('키가 없습니다'); throw ''; }
+
+async function fetchOrders(){
+  const rows = await fetch(`/api/admin/orders?key=${key}`).then(r=>r.json());
+  const tbody = document.querySelector('#tbl tbody');
+  tbody.innerHTML = '';
+  rows.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.className = `${r.status} ${r.served? 'served':''}`;
+    tr.innerHTML=`
+      <td>${r.id}</td><td>${r.table_no}</td><td>${r.name}</td>
+      <td>${r.amount.toLocaleString()}원</td>
+      <td>${r.status}</td>
+      <td>${r.items_text}</td>
+      <td>
+        <button ${(r.served || r.status !== 'paid') ? 'disabled' : ''}
+          onclick="serve(${r.id},${r.served?0:1})">
+          ${r.served?'되돌리기':'음식 전달'}
+        </button>
+
+        <!-- ★ 신규: 결제 수동 확인 버튼 -->
+        <button
+          ${r.status === 'paid' ? 'disabled' : ''}
+          onclick="setPaid(${r.id})">
+          결제 확인
+        </button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+async function serve(id, val){
+  await fetch(`/api/admin/order/${id}/serve?key=${key}`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({served:val})
+  });
+  fetchOrders();
+}
+async function setPaid(id){
+  await fetch(`/api/admin/order/${id}/pay?key=${key}`, {
+    method:'POST'
+  });
+  fetchOrders();          // 상태 새로고침
+}
+setInterval(fetchOrders, 4000); // 4초마다 새로고침
+fetchOrders();
+</script>
+</body>
+</html>

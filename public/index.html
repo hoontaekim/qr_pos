@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>축제 주점 QR 주문</title>
+<style>
+body{font-family:sans-serif;margin:40px auto;max-width:360px}
+button{margin:4px;padding:4px 8px}
+#total{font-weight:bold;font-size:1.2em}
+</style>
+</head>
+<body>
+<h2>🍻 메뉴</h2>
+<div id="menu"></div>
+<hr>
+<label>입금자명 <input id="name" /></label><br><br>
+<div>총계: <span id="total">0</span>원</div>
+<button id="orderBtn">주문하기</button>
+
+<div id="result"></div>
+
+<script>
+/* ───────── 전역 상태 ───────── */
+const cart = {};                      // {id:qty}
+let locked = false;
+
+let menu = [];                        // 서버에서 가져온 [{id,name,price,stock}]
+let stockMap = {};                    // {id:재고}
+
+const menuDiv   = document.getElementById('menu');
+const totalSpan = document.getElementById('total');
+const resultDiv = document.getElementById('result');
+
+const urlParams = new URLSearchParams(window.location.search);
+const table = parseInt(urlParams.get('table') || '0', 10);
+if (!table || table < 1 || table > 20) {
+  alert('QR이 잘못되었습니다. 직원에게 문의하세요.');
+}
+
+/* ───────── 메뉴 로드 & 렌더 ───────── */
+async function loadMenu(){
+  menu = await fetch('/api/menu').then(r=>r.json());
+  stockMap = Object.fromEntries(menu.map(m=>[m.id, m.stock]));
+  const ok = syncCartWithStock();          // 재고와 카트 정합성 체크
+  renderMenu();
+  return ok;
+}
+
+function renderMenu(){
+  const catOrder = ['MAIN MENU','SIDE MENU','BEVERAGE','SET MENU'];
+  const grouped = {};
+  for (const m of menu){
+    (grouped[m.category] ||= []).push(m);
+  }
+
+  menuDiv.innerHTML = '';
+  catOrder.forEach(cat=>{
+    if (!grouped[cat]) return;               // 해당 카테고리 없음
+    menuDiv.insertAdjacentHTML('beforeend', `<h3>• ${cat}</h3>`);
+
+    grouped[cat].forEach(m=>{
+      const soldout = stockMap[m.id]===0;
+      menuDiv.insertAdjacentHTML('beforeend', `
+        <div style="margin-left:8px">
+          ${m.name} (${m.price.toLocaleString()}원)
+          ${soldout
+            ? '<span style="color:red">[품절]</span>'
+            : `<button onclick="add(${m.id})">+</button>
+               <span id="qty${m.id}">0</span>
+               <button onclick="sub(${m.id})">-</button>`}
+          <span style="font-size:.8em"> 남은수:${stockMap[m.id]}</span>
+        </div>
+      `);
+    });
+  });
+}
+
+/* ───────── 카트 & 총액 ───────── */
+function getItem(id){ return menu.find(x=>x.id===+id); }
+
+function calcTotal(){
+  let sum = 0;
+  for (const id in cart){
+    const item = getItem(id);
+    if (item) sum += item.price * cart[id];
+  }
+  totalSpan.textContent = sum.toLocaleString();
+}
+
+/* 재고 변경 → 카트 초기화 */
+function syncCartWithStock(){
+  for (const id in cart){
+    if (!stockMap[id] || cart[id] > stockMap[id]){
+      alert('재고가 변경되어 장바구니를 초기화합니다. 다시 선택해 주세요.');
+      resetCart();
+      return false;
+    }
+  }
+  return true;
+}
+
+function resetCart(){
+  for (const id in cart) delete cart[id];
+  document.querySelectorAll('#menu span[id^="qty"]').forEach(s=>s.textContent=0);
+  calcTotal();
+}
+
+/* ───────── 수량 + / - ───────── */
+window.add = id=>{
+  if (locked || stockMap[id]===0) return;
+  const next = (cart[id]||0)+1;
+  if (next > stockMap[id]){ alert('재고 부족!'); return; }
+  cart[id]=next;
+  document.getElementById(`qty${id}`).textContent = next;
+  calcTotal();
+};
+
+window.sub = id=>{
+  if (locked || !cart[id]) return;
+  cart[id]--;
+  if (cart[id]===0) delete cart[id];
+  document.getElementById(`qty${id}`).textContent = cart[id]||0;
+  calcTotal();
+};
+
+/* ───────── UI 잠금 ───────── */
+function lockUI(){
+  locked = true;
+  document.querySelectorAll('#menu button').forEach(b=>b.disabled=true);
+  document.getElementById('name').disabled = true;
+  const btn = document.getElementById('orderBtn');
+  btn.disabled = true;
+  btn.textContent = '주문 완료 (수정 불가)';
+}
+
+/* ───────── 주문하기 ───────── */
+document.getElementById('orderBtn').onclick = async ()=>{
+  if (locked) return;
+
+  const ok = await loadMenu();                   // 최신 재고·가격 반영
+  if (!ok || !Object.keys(cart).length) return;  // 재고 충돌 시 중단
+
+  const name = document.getElementById('name').value.trim();
+  if (!name){ alert('입금자명 입력!'); return; }
+
+  const res = await fetch('/api/order',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        table,
+        name,
+        cart:Object.entries(cart).map(([id,qty])=>({id:+id,qty}))
+      })
+  }).then(r=>{
+      if(!r.ok) return r.json().then(j=>{throw j});
+      return r.json();
+  }).catch(err=>{
+      if(err.msg==='soldout'){
+        alert(`${err.itemName} 재고가 부족합니다.\n남은 수량: ${err.remain}`);
+        resetCart(); loadMenu(); locked=false;
+      }else alert('주문 실패');
+      return null;
+  });
+  if(!res) return;
+
+  lockUI();
+  resultDiv.innerHTML = `
+    <h3>${table}번 테이블 결제 안내</h3>
+    <p><b>계좌</b>: ${res.bank.account} / ${res.bank.holder}</p>
+    <p><b>입금액</b>: ${res.amount.toLocaleString()}원</p>
+    <p><b>입금자명</b>: ${res.bank.depositor}</p>
+    <p>📡 결제 확인 중...</p>`;
+  pollStatus(res.orderId);
+};
+
+/* ───────── 결제 상태 폴링 ───────── */
+async function pollStatus(id){
+  const timer = setInterval(async ()=>{
+    const o = await fetch('/api/order/'+id).then(r=>r.json());
+    if(o.status==='paid'){
+      resultDiv.innerHTML='<h2 style="color:green">결제 완료! 감사합니다 🎉</h2>';
+      clearInterval(timer);
+    }else if(o.status==='manual_check'){
+      resultDiv.innerHTML='<h2 style="color:red">확인 필요! 직원 호출 중</h2>';
+      clearInterval(timer);
+    }
+  },3000);
+}
+
+/* ───────── 초기 화면 ───────── */
+loadMenu();
+</script>
+</body>
+</html>
