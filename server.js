@@ -168,38 +168,38 @@ app.get('/api/order/:id', async (req, res) => {
   order ? res.json(order) : res.status(404).end();
 });
 
-// ---------- KB PUSH LISTENER ----------
-app.post('/bank/hit', async (req, res) => {
-  const { name, amount } = req.body ?? {};
-  if (!name || !amount) return res.status(400).end();
+// // ---------- KB PUSH LISTENER ----------
+// app.post('/bank/hit', async (req, res) => {
+//   const { name, amount } = req.body ?? {};
+//   if (!name || !amount) return res.status(400).end();
 
-  console.log('hit', name, amount);
-  /* ① 같은 이름·금액의 미결 주문 전체 조회 */
-  const rows = await db.all(
-    `SELECT id FROM orders
-     WHERE status='pending' AND name=? AND amount=?`,
-    name.trim(), amount
-  );
+//   console.log('hit', name, amount);
+//   /* ① 같은 이름·금액의 미결 주문 전체 조회 */
+//   const rows = await db.all(
+//     `SELECT id FROM orders
+//      WHERE status='pending' AND name=? AND amount=?`,
+//     name.trim(), amount
+//   );
 
-  if (rows.length === 0) {
-    return res.json({ ok:false, msg:'no_match' });
-  }
+//   if (rows.length === 0) {
+//     return res.json({ ok:false, msg:'no_match' });
+//   }
 
-  /* ② 중복인지 단일인지 판별 */
-  if (rows.length === 1) {
-    await db.run(`UPDATE orders SET status='paid' WHERE id=?`, rows[0].id);
-    return res.json({ ok:true, status:'paid', orderId: rows[0].id });
-  }
+//   /* ② 중복인지 단일인지 판별 */
+//   if (rows.length === 1) {
+//     await db.run(`UPDATE orders SET status='paid' WHERE id=?`, rows[0].id);
+//     return res.json({ ok:true, status:'paid', orderId: rows[0].id });
+//   }
 
-  /* ③ 동일 (name,amount) 가 2건↑ → manual_check */
-  await db.run(`UPDATE orders SET status='manual_check' WHERE id=?`, rows[0].id);
-  return res.json({
-    ok:true,
-    status:'manual_check',
-    orderId: rows[0].id,
-    duplicates: rows.length
-  });
-});
+//   /* ③ 동일 (name,amount) 가 2건↑ → manual_check */
+//   await db.run(`UPDATE orders SET status='manual_check' WHERE id=?`, rows[0].id);
+//   return res.json({
+//     ok:true,
+//     status:'manual_check',
+//     orderId: rows[0].id,
+//     duplicates: rows.length
+//   });
+// });
 
 app.listen(3000, () => console.log('🎉 http://localhost:3000'));
 
